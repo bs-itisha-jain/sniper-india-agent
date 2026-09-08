@@ -1,0 +1,45 @@
+# Render Blueprint — backend API for the Sniper India Agent GTT desk.
+# Frontend is deployed separately on Vercel.
+services:
+  - type: web
+    name: sniper-india-agent-api
+    runtime: node
+    rootDir: backend
+    plan: free
+    region: singapore
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TZ
+        value: Asia/Kolkata
+      - key: TOKEN_REFRESH_CRON
+        value: 0 8 * * *
+      - key: REFRESH_ON_STARTUP
+        value: "true"
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      # Set to the deployed Vercel origin (no trailing slash).
+      - key: CORS_ORIGIN
+        value: https://sniper-india-agent.vercel.app
+      # Auto-generated, kept stable across deploys.
+      - key: JWT_SECRET
+        generateValue: true
+      # --- secrets: entered in the Render dashboard, never committed ---
+      - key: APP_USERNAME
+        sync: false
+      - key: APP_PASSWORD
+        sync: false
+      - key: KITE_API_KEY
+        sync: false
+      - key: KITE_API_SECRET
+        sync: false
+      - key: ZERODHA_USER_ID
+        sync: false
+      - key: ZERODHA_PASSWORD
+        sync: false
+      - key: ZERODHA_TOTP_SECRET
+        sync: false
