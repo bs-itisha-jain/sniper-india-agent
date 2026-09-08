@@ -1,0 +1,27 @@
+# dependencies
+node_modules/
+
+# env
+.env
+.env.local
+*.local
+
+# build output
+frontend/dist/
+backend/dist/
+
+# runtime data (shared access token)
+backend/data/token.json
+
+# Legacy Python/Flask app — reference only, has its own git repo. Not part of
+# this project; never track it here.
+sniper_india_agent_python/
+
+# logs
+*.log
+npm-debug.log*
+
+# editor / OS
+.DS_Store
+.vscode/
+.idea/
