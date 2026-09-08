@@ -7,6 +7,9 @@ const PRODUCTS = ["CNC", "MIS", "NRML"];
 /** Trigger sits this far below the live price by default. */
 const TRIGGER_OFFSET = 0.1;
 
+/** Default budget — quantity is derived from this and the price. */
+const DEFAULT_INVESTMENT = 25000;
+
 /** Fat-finger thresholds. */
 const BIG_VALUE = 200_000; // ₹ — flag orders above this
 const TRIGGER_FAR_PCT = 10; // trigger this far from LTP → flag
@@ -60,7 +63,14 @@ function Delta({ value, ltp }) {
   );
 }
 
-const BLANK = { action: "BUY", quantity: "", trigger: "", limit: "", product: "CNC" };
+const BLANK = {
+  action: "BUY",
+  quantity: "",
+  trigger: "",
+  limit: "",
+  product: "CNC",
+  investment: String(DEFAULT_INVESTMENT),
+};
 
 export default function OrderTicket({
   instrument,
@@ -77,12 +87,15 @@ export default function OrderTicket({
   const [trigger, setTrigger] = useState(BLANK.trigger);
   const [limit, setLimit] = useState(BLANK.limit);
   const [product, setProduct] = useState(BLANK.product);
+  const [investment, setInvestment] = useState(BLANK.investment);
   const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState(false);
   const confirmTimer = useRef(null);
 
   const touched = useRef({ trigger: false, limit: false });
+  /** Once the user types a quantity, stop deriving it from the budget. */
+  const [qtyManual, setQtyManual] = useState(false);
   const prefilledFor = useRef(null);
   const [prefilled, setPrefilled] = useState(false);
 
@@ -101,6 +114,8 @@ export default function OrderTicket({
     setTrigger(BLANK.trigger);
     setLimit(BLANK.limit);
     setProduct(BLANK.product);
+    setInvestment(BLANK.investment);
+    setQtyManual(false);
     setStatus(null);
     clearConfirm();
   };
@@ -114,6 +129,7 @@ export default function OrderTicket({
   // New instrument (and not entering edit mode) → fresh form
   useEffect(() => {
     touched.current = { trigger: false, limit: false };
+    setQtyManual(false);
     prefilledFor.current = null;
     setPrefilled(false);
     setStatus(null);
@@ -130,6 +146,7 @@ export default function OrderTicket({
     setLimit(editing.limit_price != null ? String(editing.limit_price) : "");
     setProduct(editing.product || "CNC");
     touched.current = { trigger: true, limit: true };
+    setQtyManual(true); // the GTT's own quantity wins in edit mode
     prefilledFor.current = key;
     setPrefilled(false);
     setStatus(null);
@@ -163,6 +180,32 @@ export default function OrderTicket({
   const q = Number(quantity);
   const t = Number(trigger);
   const l = Number(limit);
+  const budget = Number(investment);
+
+  /** What a share actually costs for sizing: the limit if set, else the LTP. */
+  const unitPrice = l > 0 ? l : ltp > 0 ? ltp : 0;
+
+  // Budget drives quantity — until the user types a quantity of their own.
+  useEffect(() => {
+    if (isEdit || qtyManual) return;
+    if (!(budget > 0) || !(unitPrice > 0)) return;
+    const n = Math.floor(budget / unitPrice);
+    setQuantity(n > 0 ? String(n) : "");
+  }, [isEdit, qtyManual, budget, unitPrice]);
+
+  const editQuantity = (v) => {
+    setQtyManual(true); // manual quantity takes over
+    clearConfirm();
+    setQuantity(v);
+  };
+  const editInvestment = (v) => {
+    setQtyManual(false); // budget is back in charge
+    clearConfirm();
+    setInvestment(v);
+  };
+
+  const deployed = q > 0 && unitPrice > 0 ? q * unitPrice : 0;
+  const shortfall = budget > 0 && deployed > 0 ? budget - deployed : 0;
 
   const problems = useMemo(() => {
     const list = [];
@@ -292,43 +335,74 @@ export default function OrderTicket({
 
         <div className="grid2">
           <div className="f">
-            <label>Quantity</label>
+            <label>
+              Investment
+              {!qtyManual && deployed > 0 && (
+                <span className="delta">₹{money(shortfall)} left</span>
+              )}
+            </label>
             <div className="stepper">
-              <button type="button" onClick={bump(setQuantity, quantity, -1)}>
+              <button type="button" onClick={bump(editInvestment, investment, -1000)}>
+                −
+              </button>
+              <input
+                inputMode="numeric"
+                value={investment}
+                onChange={(e) => editInvestment(e.target.value.replace(/[^\d]/g, ""))}
+                placeholder="25000"
+              />
+              <button type="button" onClick={bump(editInvestment, investment, 1000)}>
+                +
+              </button>
+            </div>
+            <div className="quick">
+              {[10000, 25000, 50000, 100000].map((v) => (
+                <button
+                  type="button"
+                  key={v}
+                  onClick={() => editInvestment(String(v))}
+                  title={`Set budget to ₹${v.toLocaleString("en-IN")}`}
+                >
+                  {v >= 100000 ? `${v / 100000}L` : `${v / 1000}k`}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="f">
+            <label>
+              Quantity
+              {qtyManual ? (
+                <span className="delta">manual</span>
+              ) : unitPrice > 0 ? (
+                <span className="delta">₹{money(unitPrice)} each</span>
+              ) : null}
+            </label>
+            <div className="stepper">
+              <button type="button" onClick={bump(editQuantity, quantity, -1)}>
                 −
               </button>
               <input
                 inputMode="numeric"
                 value={quantity}
-                onChange={(e) => {
-                  setQuantity(e.target.value.replace(/[^\d]/g, ""));
-                  clearConfirm();
-                }}
+                onChange={(e) => editQuantity(e.target.value.replace(/[^\d]/g, ""))}
                 placeholder="0"
               />
-              <button type="button" onClick={bump(setQuantity, quantity, 1)}>
+              <button type="button" onClick={bump(editQuantity, quantity, 1)}>
                 +
               </button>
             </div>
-          </div>
-
-          <div className="f">
-            <label>Product</label>
-            <div className="pills">
-              {PRODUCTS.map((p) => (
+            {qtyManual && budget > 0 && unitPrice > 0 && (
+              <div className="quick">
                 <button
                   type="button"
-                  key={p}
-                  className={product === p ? "on" : ""}
-                  onClick={() => {
-                    setProduct(p);
-                    clearConfirm();
-                  }}
+                  className="wide"
+                  onClick={() => setQtyManual(false)}
                 >
-                  {p}
+                  ↺ back to ₹{money(budget)} budget
                 </button>
-              ))}
-            </div>
+              </div>
+            )}
           </div>
 
           <div className="f">
@@ -371,6 +445,25 @@ export default function OrderTicket({
               </button>
             </div>
             <Quick ltp={ltp} onPick={editLimit} />
+          </div>
+        </div>
+
+        <div className="f f-wide">
+          <label>Product</label>
+          <div className="pills">
+            {PRODUCTS.map((p) => (
+              <button
+                type="button"
+                key={p}
+                className={product === p ? "on" : ""}
+                onClick={() => {
+                  setProduct(p);
+                  clearConfirm();
+                }}
+              >
+                {p}
+              </button>
+            ))}
           </div>
         </div>
 

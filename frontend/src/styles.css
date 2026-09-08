@@ -957,6 +957,24 @@ select {
   white-space: nowrap;
   flex: none;
 }
+.search-clear {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--paper-2);
+  color: var(--ink-3);
+  font-size: 11px;
+  line-height: 1;
+  transition: background 0.15s, color 0.15s;
+}
+.search-clear:hover {
+  background: var(--sell-soft);
+  color: var(--sell);
+}
 
 .results {
   position: absolute;
@@ -1396,6 +1414,15 @@ select {
 .stepper button:hover {
   background: var(--paper-2);
   color: var(--ink);
+}
+
+.f-wide {
+  margin-top: 12px;
+}
+.quick button.wide {
+  flex: 1 1 100%;
+  height: 24px;
+  font-size: 9.5px;
 }
 
 /* quick price chips */

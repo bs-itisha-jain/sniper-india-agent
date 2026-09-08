@@ -76,7 +76,7 @@ function Desk() {
         <ConnectBar />
 
         <div className="desk-top">
-          <SymbolSearch onPick={pick} resetSignal={resetSignal} />
+          <SymbolSearch onPick={pick} onClear={clearAll} resetSignal={resetSignal} />
           <TargetCard instrument={instrument} onLtp={setLtp} onStale={setLtpStale} />
         </div>
 

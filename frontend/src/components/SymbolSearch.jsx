@@ -4,11 +4,10 @@ import { searchSymbols } from "../lib/instruments.js";
 const cleanTicker = (raw) =>
   raw.trim().toUpperCase().replace(/\s+/g, "").replace(/[^A-Z0-9:&-]/g, "");
 
-export default function SymbolSearch({ onPick, resetSignal }) {
+export default function SymbolSearch({ onPick, onClear, resetSignal }) {
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
-  const [focused, setFocused] = useState(false);
   const boxRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -56,6 +55,20 @@ export default function SymbolSearch({ onPick, resetSignal }) {
     onPick({ tradingsymbol, exchange: "NSE", synthetic: false });
   };
 
+  // Empty the field → the whole ticket clears with it.
+  const handleChange = (raw) => {
+    setQ(raw);
+    setOpen(true);
+    if (raw.trim() === "") onClear?.();
+  };
+
+  const clearField = () => {
+    setQ("");
+    setOpen(false);
+    onClear?.();
+    inputRef.current?.focus();
+  };
+
   const resolveTyped = () => {
     const sym = cleanTicker(q);
     if (!sym) return;
@@ -95,21 +108,26 @@ export default function SymbolSearch({ onPick, resetSignal }) {
         <input
           ref={inputRef}
           value={q}
-          onChange={(e) => {
-            setQ(e.target.value);
-            setOpen(true);
-          }}
-          onFocus={() => {
-            setFocused(true);
-            setOpen(true);
-          }}
-          onBlur={() => setFocused(false)}
+          onChange={(e) => handleChange(e.target.value)}
+          onFocus={() => setOpen(true)}
           onKeyDown={onKeyDown}
           placeholder="Search NSE symbol — e.g. RELIANCE, INFY, TATAMOTORS"
           autoComplete="off"
           spellCheck="false"
         />
-        <span className="kbd">{focused ? "↵ lock" : "/"}</span>
+        {q ? (
+          <button
+            type="button"
+            className="search-clear"
+            onClick={clearField}
+            title="Clear symbol"
+            aria-label="Clear symbol"
+          >
+            ✕
+          </button>
+        ) : (
+          <span className="kbd">/</span>
+        )}
       </div>
 
       {showPanel && (
