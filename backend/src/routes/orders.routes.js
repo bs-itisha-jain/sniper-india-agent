@@ -185,6 +185,57 @@ async function fetchLtp(instrument) {
   return Number(ltpResponse?.[instrument]?.last_price);
 }
 
+/** Flatten a Kite order-book row. Kite's /orders only returns the current day. */
+function shapeOrder(o) {
+  return {
+    order_id: o.order_id,
+    parent_order_id: o.parent_order_id || null,
+    status: o.status, // COMPLETE | OPEN | CANCELLED | REJECTED | TRIGGER PENDING | ...
+    status_message: o.status_message || null,
+    tradingsymbol: o.tradingsymbol,
+    exchange: o.exchange,
+    action: o.transaction_type, // BUY | SELL
+    order_type: o.order_type, // MARKET | LIMIT | SL | SL-M
+    product: o.product,
+    quantity: o.quantity ?? null,
+    filled_quantity: o.filled_quantity ?? null,
+    pending_quantity: o.pending_quantity ?? null,
+    price: o.price ?? null,
+    trigger_price: o.trigger_price ?? null,
+    average_price: o.average_price ?? null,
+    placed_at: o.order_timestamp || null,
+    updated_at: o.exchange_update_timestamp || o.order_timestamp || null,
+    tag: o.tag || null,
+  };
+}
+
+/** Today's order book (Kite only keeps the current trading day). */
+router.get("/orders", async (req, res) => {
+  if (!hasAccessToken()) return noToken(res);
+  try {
+    const orders = await withKite((kc) => kc.getOrders());
+    const shaped = (Array.isArray(orders) ? orders : [])
+      .map(shapeOrder)
+      .sort((a, b) => new Date(b.placed_at) - new Date(a.placed_at));
+    return res.json({ orders: shaped });
+  } catch (err) {
+    logger.error("Order list failed:", err.message);
+    return fail(res, err, "Failed to list orders");
+  }
+});
+
+/** Executed trades for today. */
+router.get("/trades", async (req, res) => {
+  if (!hasAccessToken()) return noToken(res);
+  try {
+    const trades = await withKite((kc) => kc.getTrades());
+    return res.json({ trades: Array.isArray(trades) ? trades : [] });
+  } catch (err) {
+    logger.error("Trade list failed:", err.message);
+    return fail(res, err, "Failed to list trades");
+  }
+});
+
 router.post("/order", async (req, res) => {
   if (!hasAccessToken()) return noToken(res);
 
