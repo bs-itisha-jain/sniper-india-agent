@@ -48,8 +48,17 @@ function GttRow({ g, onEdit }) {
         <span className={`gtt-status s-${tone}`}>{g.status}</span>
       </div>
       <div className="gtt-detail">
-        {g.quantity} qty · trigger ₹{money(g.trigger_price)} → limit ₹{money(g.limit_price)} ·{" "}
-        {g.product}
+        {g.type === "two-leg" ? (
+          <>
+            {g.quantity} qty · SL ₹{money(g.sl_price)} · target ₹{money(g.target_price)} ·{" "}
+            {g.product}
+          </>
+        ) : (
+          <>
+            {g.quantity} qty · trigger ₹{money(g.trigger_price)} → limit ₹
+            {money(g.limit_price)} · {g.product}
+          </>
+        )}
       </div>
 
       {canManage && (

@@ -4,16 +4,14 @@ import { useGtts } from "../context/GttContext.jsx";
 
 const PRODUCTS = ["CNC", "MIS", "NRML"];
 
-/** Trigger sits this far below the live price by default. */
-const TRIGGER_OFFSET = 0.1;
+/** SL and target sit this far either side of the limit price by default. */
+const SL_PCT = 0.8;
 
 /** Default budget — quantity is derived from this and the price. */
 const DEFAULT_INVESTMENT = 25000;
 
 /** Fat-finger thresholds. */
-const BIG_VALUE = 200_000; // ₹ — flag orders above this
-const TRIGGER_FAR_PCT = 10; // trigger this far from LTP → flag
-const LIMIT_OFF_PCT = 3; // limit this far from trigger → flag
+const BIG_VALUE = 200_000; // ₹ — flag positions above this
 const CONFIRM_WINDOW_MS = 5000;
 
 const money = (n) =>
@@ -26,11 +24,19 @@ const OFFSETS = [-2, -1, 0, 1, 2];
 
 const ORDER_ERRORS = {
   no_token: "No Zerodha session — connect the broker before placing orders.",
-  token_expired: "Session expired and re-login failed. Reconnect the broker.",
+  token_expired: "Session expired. Reconnect the broker.",
   invalid_symbol: "Zerodha doesn't recognise this symbol.",
   connection: "Zerodha didn't respond. Nothing was placed — try again.",
   offline: "Backend unreachable. Nothing was placed.",
 };
+
+/** SL / target for a given entry price and the position being protected. */
+function legsFor(base, action) {
+  const off = base * (SL_PCT / 100);
+  return action === "BUY"
+    ? { sl: base - off, target: base + off } // long: SL below, target above
+    : { sl: base + off, target: base - off }; // short: SL above, target below
+}
 
 function Quick({ ltp, onPick }) {
   if (!ltp) return null;
@@ -50,10 +56,11 @@ function Quick({ ltp, onPick }) {
   );
 }
 
-function Delta({ value, ltp }) {
+function Delta({ value, base, label }) {
   const v = Number(value);
-  if (!ltp || !(v > 0)) return <span className="delta">Δ LTP</span>;
-  const pct = ((v - ltp) / ltp) * 100;
+  const b = Number(base);
+  if (!(b > 0) || !(v > 0)) return <span className="delta">{label}</span>;
+  const pct = ((v - b) / b) * 100;
   const cls = pct > 0 ? "pos" : pct < 0 ? "neg" : "";
   return (
     <span className={`delta ${cls}`}>
@@ -66,8 +73,9 @@ function Delta({ value, ltp }) {
 const BLANK = {
   action: "BUY",
   quantity: "",
-  trigger: "",
   limit: "",
+  sl: "",
+  target: "",
   product: "CNC",
   investment: String(DEFAULT_INVESTMENT),
 };
@@ -84,8 +92,9 @@ export default function OrderTicket({
   const { refresh: refreshGtts } = useGtts();
   const [action, setAction] = useState(BLANK.action);
   const [quantity, setQuantity] = useState(BLANK.quantity);
-  const [trigger, setTrigger] = useState(BLANK.trigger);
   const [limit, setLimit] = useState(BLANK.limit);
+  const [sl, setSl] = useState(BLANK.sl);
+  const [target, setTarget] = useState(BLANK.target);
   const [product, setProduct] = useState(BLANK.product);
   const [investment, setInvestment] = useState(BLANK.investment);
   const [status, setStatus] = useState(null);
@@ -93,7 +102,7 @@ export default function OrderTicket({
   const [pendingConfirm, setPendingConfirm] = useState(false);
   const confirmTimer = useRef(null);
 
-  const touched = useRef({ trigger: false, limit: false });
+  const touched = useRef({ limit: false, sl: false, target: false });
   /** Once the user types a quantity, stop deriving it from the budget. */
   const [qtyManual, setQtyManual] = useState(false);
   const prefilledFor = useRef(null);
@@ -111,12 +120,14 @@ export default function OrderTicket({
   const resetForm = () => {
     setAction(BLANK.action);
     setQuantity(BLANK.quantity);
-    setTrigger(BLANK.trigger);
     setLimit(BLANK.limit);
+    setSl(BLANK.sl);
+    setTarget(BLANK.target);
     setProduct(BLANK.product);
     setInvestment(BLANK.investment);
     setQtyManual(false);
     setStatus(null);
+    touched.current = { limit: false, sl: false, target: false };
     clearConfirm();
   };
 
@@ -128,7 +139,7 @@ export default function OrderTicket({
 
   // New instrument (and not entering edit mode) → fresh form
   useEffect(() => {
-    touched.current = { trigger: false, limit: false };
+    touched.current = { limit: false, sl: false, target: false };
     setQtyManual(false);
     prefilledFor.current = null;
     setPrefilled(false);
@@ -137,15 +148,16 @@ export default function OrderTicket({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
-  // Entering / leaving edit mode → load the GTT's values, freeze prefill
+  // Entering edit mode → load the GTT's values, freeze prefill
   useEffect(() => {
     if (!editing) return;
     setAction(editing.action || "BUY");
     setQuantity(String(editing.quantity ?? ""));
-    setTrigger(editing.trigger_price != null ? String(editing.trigger_price) : "");
     setLimit(editing.limit_price != null ? String(editing.limit_price) : "");
+    setSl(editing.sl_price != null ? String(editing.sl_price) : "");
+    setTarget(editing.target_price != null ? String(editing.target_price) : "");
     setProduct(editing.product || "CNC");
-    touched.current = { trigger: true, limit: true };
+    touched.current = { limit: true, sl: true, target: true };
     setQtyManual(true); // the GTT's own quantity wins in edit mode
     prefilledFor.current = key;
     setPrefilled(false);
@@ -154,32 +166,66 @@ export default function OrderTicket({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing]);
 
-  // Prefill from LTP — create mode only
+  // Prefill the limit price from LTP — create mode only
   useEffect(() => {
     if (isEdit || !key || !(ltp > 0) || prefilledFor.current === key) return;
     prefilledFor.current = key;
-    const below = ltp - TRIGGER_OFFSET;
     if (!touched.current.limit) setLimit(ltp.toFixed(2));
-    if (!touched.current.trigger) setTrigger((below > 0 ? below : ltp).toFixed(2));
     setPrefilled(true);
   }, [isEdit, key, ltp]);
 
-  const editTrigger = (v) => {
-    touched.current.trigger = true;
-    setPrefilled(false);
+  // Auto-derive SL + target at ±0.8% from the limit price, per side.
+  useEffect(() => {
+    if (isEdit) return;
+    const base = Number(limit);
+    if (!(base > 0)) return;
+    const { sl: dSl, target: dTarget } = legsFor(base, action);
+    if (!touched.current.sl) setSl(dSl.toFixed(2));
+    if (!touched.current.target) setTarget(dTarget.toFixed(2));
+  }, [isEdit, limit, action]);
+
+  const setSide = (a) => {
+    setAction(a);
+    // side change flips which way SL/target point — re-derive them
+    touched.current.sl = false;
+    touched.current.target = false;
     clearConfirm();
-    setTrigger(v);
   };
+
   const editLimit = (v) => {
     touched.current.limit = true;
     setPrefilled(false);
     clearConfirm();
     setLimit(v);
   };
+  const editSl = (v) => {
+    touched.current.sl = true;
+    setPrefilled(false);
+    clearConfirm();
+    setSl(v);
+  };
+  const editTarget = (v) => {
+    touched.current.target = true;
+    setPrefilled(false);
+    clearConfirm();
+    setTarget(v);
+  };
+  const resetLegs = () => {
+    touched.current.sl = false;
+    touched.current.target = false;
+    const base = Number(limit);
+    if (base > 0) {
+      const { sl: dSl, target: dTarget } = legsFor(base, action);
+      setSl(dSl.toFixed(2));
+      setTarget(dTarget.toFixed(2));
+    }
+    clearConfirm();
+  };
 
   const q = Number(quantity);
-  const t = Number(trigger);
   const l = Number(limit);
+  const s = Number(sl);
+  const tg = Number(target);
   const budget = Number(investment);
 
   /** What a share actually costs for sizing: the limit if set, else the LTP. */
@@ -194,12 +240,12 @@ export default function OrderTicket({
   }, [isEdit, qtyManual, budget, unitPrice]);
 
   const editQuantity = (v) => {
-    setQtyManual(true); // manual quantity takes over
+    setQtyManual(true);
     clearConfirm();
     setQuantity(v);
   };
   const editInvestment = (v) => {
-    setQtyManual(false); // budget is back in charge
+    setQtyManual(false);
     clearConfirm();
     setInvestment(v);
   };
@@ -211,29 +257,34 @@ export default function OrderTicket({
     const list = [];
     if (!instrument) list.push("Pick an instrument first");
     if (!Number.isInteger(q) || q <= 0) list.push("Set a quantity");
-    if (!(t > 0)) list.push("Set a trigger price");
     if (!(l > 0)) list.push("Set a limit price");
+    if (!(s > 0)) list.push("Set a stop-loss");
+    if (!(tg > 0)) list.push("Set a target");
+    if (l > 0 && s > 0 && tg > 0) {
+      if (action === "BUY" && !(s < l && tg > l))
+        list.push("BUY: stop-loss below the limit, target above");
+      if (action === "SELL" && !(s > l && tg < l))
+        list.push("SELL: stop-loss above the limit, target below");
+    }
     return list;
-  }, [instrument, q, t, l]);
+  }, [instrument, q, l, s, tg, action]);
 
   const formOk = problems.length === 0;
+
+  const riskValue = formOk ? Math.abs(l - s) * q : 0;
+  const rewardValue = formOk ? Math.abs(tg - l) * q : 0;
   const estValue = formOk ? q * l : 0;
 
-  // Fat-finger warnings — informational, not blocking
   const warnings = useMemo(() => {
     if (!formOk) return [];
     const w = [];
-    if (estValue > BIG_VALUE) w.push(`Large order — ₹${money(estValue)}`);
-    if (ltp > 0) {
-      const trigPct = ((t - ltp) / ltp) * 100;
-      if (Math.abs(trigPct) > TRIGGER_FAR_PCT)
-        w.push(`Trigger is ${trigPct > 0 ? "+" : ""}${trigPct.toFixed(1)}% from LTP`);
-    }
-    const limPct = ((l - t) / t) * 100;
-    if (Math.abs(limPct) > LIMIT_OFF_PCT)
-      w.push(`Limit is ${limPct > 0 ? "+" : ""}${limPct.toFixed(1)}% off the trigger`);
+    if (estValue > BIG_VALUE) w.push(`Large position — ₹${money(estValue)}`);
+    const slPct = Math.abs((l - s) / l) * 100;
+    const tgPct = Math.abs((tg - l) / l) * 100;
+    if (slPct > 3) w.push(`Stop-loss is ${slPct.toFixed(1)}% away`);
+    if (tgPct > 3) w.push(`Target is ${tgPct.toFixed(1)}% away`);
     return w;
-  }, [formOk, estValue, ltp, t, l]);
+  }, [formOk, estValue, l, s, tg]);
 
   const canSubmit = formOk && tokenReady && !(ltpStale && !isEdit);
   const blockReason = !formOk
@@ -255,8 +306,9 @@ export default function OrderTicket({
       symbol: `${instrument.exchange}:${instrument.tradingsymbol}`,
       action,
       quantity: q,
-      trigger_price: t,
-      price: l,
+      limit_price: l,
+      sl_price: s,
+      target_price: tg,
       product,
     };
     setBusy(true);
@@ -269,7 +321,7 @@ export default function OrderTicket({
       } else {
         const res = await api.createGtt(payload);
         const id = res?.gtt?.trigger_id;
-        setStatus({ type: "ok", msg: `GTT armed${id ? ` · #${id}` : ""}.` });
+        setStatus({ type: "ok", msg: `SL/Target GTT armed${id ? ` · #${id}` : ""}.` });
       }
       refreshGtts?.();
     } catch (err) {
@@ -296,6 +348,8 @@ export default function OrderTicket({
 
   const sideClass = action === "SELL" ? "sell" : "";
   const verb = isEdit ? "Update" : "Arm";
+  const posLabel = action === "BUY" ? "long" : "short";
+  const legsCustom = touched.current.sl || touched.current.target;
 
   return (
     <form className={`ticket ${sideClass}`} onSubmit={submit}>
@@ -314,20 +368,14 @@ export default function OrderTicket({
           <button
             type="button"
             className={action === "BUY" ? "on" : ""}
-            onClick={() => {
-              setAction("BUY");
-              clearConfirm();
-            }}
+            onClick={() => setSide("BUY")}
           >
             BUY
           </button>
           <button
             type="button"
             className={action === "SELL" ? "on" : ""}
-            onClick={() => {
-              setAction("SELL");
-              clearConfirm();
-            }}
+            onClick={() => setSide("SELL")}
           >
             SELL
           </button>
@@ -394,59 +442,84 @@ export default function OrderTicket({
             </div>
             {qtyManual && budget > 0 && unitPrice > 0 && (
               <div className="quick">
-                <button
-                  type="button"
-                  className="wide"
-                  onClick={() => setQtyManual(false)}
-                >
+                <button type="button" className="wide" onClick={() => setQtyManual(false)}>
                   ↺ back to ₹{money(budget)} budget
                 </button>
               </div>
             )}
           </div>
+        </div>
 
+        <div className="f f-wide">
+          <label>
+            Limit price <span className="delta">your entry / reference</span>
+          </label>
+          <div className="stepper">
+            <button type="button" onClick={bump(editLimit, limit, -0.05)}>
+              −
+            </button>
+            <input
+              inputMode="decimal"
+              value={limit}
+              onChange={(e) => editLimit(e.target.value.replace(/[^\d.]/g, ""))}
+              placeholder="0.00"
+            />
+            <button type="button" onClick={bump(editLimit, limit, 0.05)}>
+              +
+            </button>
+          </div>
+          <Quick ltp={ltp} onPick={editLimit} />
+        </div>
+
+        <div className="grid2">
           <div className="f">
             <label>
-              Trigger price <Delta value={trigger} ltp={ltp} />
+              Stop-loss <Delta value={sl} base={limit} label={`−${SL_PCT}%`} />
             </label>
             <div className="stepper">
-              <button type="button" onClick={bump(editTrigger, trigger, -0.05)}>
+              <button type="button" onClick={bump(editSl, sl, -0.05)}>
                 −
               </button>
               <input
                 inputMode="decimal"
-                value={trigger}
-                onChange={(e) => editTrigger(e.target.value.replace(/[^\d.]/g, ""))}
+                value={sl}
+                onChange={(e) => editSl(e.target.value.replace(/[^\d.]/g, ""))}
                 placeholder="0.00"
               />
-              <button type="button" onClick={bump(editTrigger, trigger, 0.05)}>
+              <button type="button" onClick={bump(editSl, sl, 0.05)}>
                 +
               </button>
             </div>
-            <Quick ltp={ltp} onPick={editTrigger} />
           </div>
 
           <div className="f">
             <label>
-              Limit price <Delta value={limit} ltp={ltp} />
+              Target <Delta value={target} base={limit} label={`+${SL_PCT}%`} />
             </label>
             <div className="stepper">
-              <button type="button" onClick={bump(editLimit, limit, -0.05)}>
+              <button type="button" onClick={bump(editTarget, target, -0.05)}>
                 −
               </button>
               <input
                 inputMode="decimal"
-                value={limit}
-                onChange={(e) => editLimit(e.target.value.replace(/[^\d.]/g, ""))}
+                value={target}
+                onChange={(e) => editTarget(e.target.value.replace(/[^\d.]/g, ""))}
                 placeholder="0.00"
               />
-              <button type="button" onClick={bump(editLimit, limit, 0.05)}>
+              <button type="button" onClick={bump(editTarget, target, 0.05)}>
                 +
               </button>
             </div>
-            <Quick ltp={ltp} onPick={editLimit} />
           </div>
         </div>
+
+        {legsCustom && !isEdit && l > 0 && (
+          <div className="quick">
+            <button type="button" className="wide" onClick={resetLegs}>
+              ↺ back to ±{SL_PCT}% defaults
+            </button>
+          </div>
+        )}
 
         <div className="f f-wide">
           <label>Product</label>
@@ -469,8 +542,8 @@ export default function OrderTicket({
 
         {prefilled && ltp > 0 && !isEdit && (
           <div className="prefill-note">
-            Prefilled from LTP — limit ₹{money(ltp)}, trigger ₹{TRIGGER_OFFSET.toFixed(2)}{" "}
-            below. Edit either to take over.
+            Prefilled — limit ₹{money(l)}, SL &amp; target at ±{SL_PCT}%. Edit any field to
+            take over.
           </div>
         )}
       </div>
@@ -482,25 +555,32 @@ export default function OrderTicket({
             <b>{instrument ? instrument.tradingsymbol : "—"}</b>
           </div>
           <div className="receipt-row">
-            <span>When</span>
+            <span>Protecting</span>
             <b>
-              {t > 0
-                ? `LTP ${action === "BUY" ? "≤" : "≥"} ₹${money(t)}`
-                : "trigger not set"}
+              {action} · {q > 0 ? q : "—"} {posLabel}
             </b>
           </div>
           <div className="receipt-row">
-            <span>Then place</span>
-            <b>
-              {action} {q > 0 ? q : "—"} @ ₹{l > 0 ? money(l) : "—"}
-            </b>
+            <span>Limit</span>
+            <b>{l > 0 ? `₹${money(l)}` : "—"}</b>
           </div>
           <div className="receipt-row">
-            <span>Product</span>
-            <b>{product}</b>
+            <span>Stop-loss</span>
+            <b>{s > 0 ? `₹${money(s)}` : "—"}</b>
+          </div>
+          <div className="receipt-row">
+            <span>Target</span>
+            <b>{tg > 0 ? `₹${money(tg)}` : "—"}</b>
+          </div>
+          <div className="receipt-row">
+            <span>Risk / reward</span>
+            <b>
+              {riskValue > 0 ? `−₹${money(riskValue)}` : "—"} /{" "}
+              {rewardValue > 0 ? `+₹${money(rewardValue)}` : "—"}
+            </b>
           </div>
           <div className="receipt-row total">
-            <span>Est. order value</span>
+            <span>Position value</span>
             <b>{estValue > 0 ? `₹${money(estValue)}` : "—"}</b>
           </div>
         </div>
@@ -523,9 +603,9 @@ export default function OrderTicket({
           {busy ? (
             <span className="spin" />
           ) : pendingConfirm ? (
-            `Confirm — ${verb.toLowerCase()} ${action} ${q} ${instrument?.tradingsymbol || ""}`
+            `Confirm — SL/target for ${q} ${instrument?.tradingsymbol || ""}`
           ) : (
-            `${verb} ${action}${instrument ? ` · ${instrument.tradingsymbol}` : " GTT"}`
+            `${verb} SL/Target${instrument ? ` · ${instrument.tradingsymbol}` : " GTT"}`
           )}
         </button>
 
@@ -535,7 +615,8 @@ export default function OrderTicket({
           </button>
         ) : (
           <div className="hint-line">
-            {blockReason || "GTT fires the LIMIT order when the trigger is met"}
+            {blockReason ||
+              "OCO GTT: whichever of SL / target hits first fires, the other cancels"}
           </div>
         )}
       </aside>

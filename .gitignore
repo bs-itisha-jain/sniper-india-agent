@@ -25,3 +25,9 @@ npm-debug.log*
 .DS_Store
 .vscode/
 .idea/
+
+# scratch / reference images dropped in the repo root
+/image*.png
+/*.jpg
+/*.jpeg
+/*.xlsx
