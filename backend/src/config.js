@@ -18,13 +18,6 @@ export const config = {
     .map((s) => s.trim())
     .filter(Boolean),
 
-  app: {
-    username: required("APP_USERNAME"),
-    password: required("APP_PASSWORD"),
-    jwtSecret: required("JWT_SECRET"),
-    jwtExpiresIn: process.env.JWT_EXPIRES_IN || "7d",
-  },
-
   kite: {
     apiKey: required("KITE_API_KEY"),
     apiSecret: required("KITE_API_SECRET"),

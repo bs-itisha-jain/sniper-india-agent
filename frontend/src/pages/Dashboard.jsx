@@ -1,5 +1,4 @@
 import { useCallback, useState } from "react";
-import { useAuth } from "../context/AuthContext.jsx";
 import { BrokerProvider, useBroker } from "../context/BrokerContext.jsx";
 import { GttProvider } from "../context/GttContext.jsx";
 import Rail from "../components/Rail.jsx";
@@ -10,7 +9,6 @@ import TargetCard from "../components/TargetCard.jsx";
 import OrderTicket from "../components/OrderTicket.jsx";
 
 function Desk() {
-  const { user, logout } = useAuth();
   const { ready: tokenReady } = useBroker();
 
   const [instrument, setInstrument] = useState(null);
@@ -62,13 +60,6 @@ function Desk() {
               title="Clear the symbol and every field"
             >
               Clear all
-            </button>
-            <span className="chip">
-              <span className="av">{(user || "?").slice(0, 1).toUpperCase()}</span>
-              {user}
-            </span>
-            <button className="btn ghost sm" onClick={logout}>
-              Sign out
             </button>
           </div>
         </header>

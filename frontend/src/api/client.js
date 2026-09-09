@@ -18,7 +18,6 @@ async function request(path, options = {}) {
         "Content-Type": "application/json",
         ...(options.headers || {}),
       },
-      credentials: "include",
     });
   } catch {
     // fetch only rejects when the request never reached the server
@@ -37,14 +36,6 @@ async function request(path, options = {}) {
 }
 
 export const api = {
-  login: (username, password) =>
-    request("/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ username, password }),
-    }),
-  logout: () => request("/auth/logout", { method: "POST" }),
-  me: () => request("/auth/me"),
-
   ltp: (symbol) => request(`/ltp?symbol=${encodeURIComponent(symbol)}`),
   createGtt: (payload) =>
     request("/order", { method: "POST", body: JSON.stringify(payload) }),
