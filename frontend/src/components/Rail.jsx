@@ -16,7 +16,7 @@ export default function Rail({ onEditGtt }) {
       <GttList onEdit={onEditGtt} />
 
       <div className="rail-foot">
-        Broker session refreshes daily at 8:00 AM IST
+        Zerodha expires the session overnight — paste a fresh token each day
       </div>
     </aside>
   );

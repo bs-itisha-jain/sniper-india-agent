@@ -1,8 +1,6 @@
 import pkg from "kiteconnect";
 import { config } from "../config.js";
 import { getToken } from "./tokenStore.js";
-import { refreshToken } from "./scheduler.js";
-import { logger } from "../logger.js";
 
 const { KiteConnect } = pkg;
 
@@ -43,25 +41,21 @@ export function classifyKiteError(err) {
 }
 
 /**
- * Runs a Kite call. If the shared token died mid-session (Zerodha expires it
- * every morning), transparently refreshes once and replays the call so the
- * user never sees a spurious failure.
+ * Runs a Kite call. Zerodha expires the shared token every morning (~07:30 IST);
+ * when that happens the call surfaces a clean `token_expired` error and the user
+ * pastes a fresh token via the connect bar.
  */
 export async function withKite(fn) {
   try {
     return await fn(getKite());
   } catch (err) {
-    if (classifyKiteError(err) !== "token_expired") throw err;
-
-    logger.warn("Kite rejected the stored token — refreshing and retrying once");
-    const result = await refreshToken("token rejected mid-session");
-    if (!result.ok) {
+    if (classifyKiteError(err) === "token_expired") {
       const wrapped = new Error(
-        "Zerodha session expired and automatic re-login failed: " + result.error
+        "Zerodha session expired — paste a fresh access token to reconnect."
       );
       wrapped.error_type = "TokenException";
       throw wrapped;
     }
-    return await fn(getKite());
+    throw err;
   }
 }

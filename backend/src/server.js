@@ -3,7 +3,6 @@ import cors from "cors";
 
 import { config, warnMissingConfig } from "./config.js";
 import { logger } from "./logger.js";
-import { startScheduler } from "./services/scheduler.js";
 
 import marketRoutes from "./routes/market.routes.js";
 import ordersRoutes from "./routes/orders.routes.js";
@@ -39,5 +38,4 @@ app.use((err, req, res, next) => {
 
 app.listen(config.port, () => {
   logger.info(`Backend listening on http://localhost:${config.port} (${config.nodeEnv})`);
-  startScheduler();
 });

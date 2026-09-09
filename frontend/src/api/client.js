@@ -45,7 +45,6 @@ export const api = {
   cancelGtt: (id) => request(`/orders/gtt/${id}`, { method: "DELETE" }),
 
   tokenStatus: () => request("/token/status"),
-  refreshToken: () => request("/token/refresh", { method: "POST" }),
   loginUrl: () => request("/token/login-url"),
   submitRequestToken: (requestToken) =>
     request("/token/manual", {

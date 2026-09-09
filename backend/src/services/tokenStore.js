@@ -41,14 +41,14 @@ export function saveToken(data) {
 }
 
 /** The next 07:30 IST strictly after `from`. */
-export function nextIstBoundary(from = new Date(), hour = EXPIRY_IST_HOUR, minute = EXPIRY_IST_MINUTE) {
+function nextIstBoundary(from = new Date()) {
   const ist = new Date(from.getTime() + IST_OFFSET_MS);
   let boundary = Date.UTC(
     ist.getUTCFullYear(),
     ist.getUTCMonth(),
     ist.getUTCDate(),
-    hour,
-    minute,
+    EXPIRY_IST_HOUR,
+    EXPIRY_IST_MINUTE,
     0,
     0
   );

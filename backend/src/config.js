@@ -23,18 +23,6 @@ export const config = {
     apiSecret: required("KITE_API_SECRET"),
   },
 
-  zerodha: {
-    userId: required("ZERODHA_USER_ID"),
-    password: required("ZERODHA_PASSWORD"),
-    totpSecret: required("ZERODHA_TOTP_SECRET"),
-  },
-
-  scheduler: {
-    cron: process.env.TOKEN_REFRESH_CRON || "0 8 * * *",
-    timezone: process.env.TZ || "Asia/Kolkata",
-    refreshOnStartup: process.env.REFRESH_ON_STARTUP !== "false",
-  },
-
   tokenFile: process.env.TOKEN_FILE || "./data/token.json",
 };
 

@@ -52,13 +52,11 @@ export function BrokerProvider({ children }) {
     return () => clearInterval(id);
   }, []);
 
-  const sch = status?.scheduler || null;
-  const refreshing = busy || Boolean(sch?.running);
   const live = Boolean(status?.hasToken && status?.fresh);
 
   const phase = !status
     ? "checking"
-    : refreshing
+    : busy
       ? "auth"
       : live
         ? "connected"
@@ -68,26 +66,13 @@ export function BrokerProvider({ children }) {
 
   // prefetch the Zerodha login URL whenever a manual connect might be needed
   useEffect(() => {
-    if (loginUrl || !sch?.needsManual) return;
+    if (loginUrl) return;
     if (phase === "connected" || phase === "checking") return;
     api
       .loginUrl()
       .then((d) => setLoginUrl(d.loginUrl))
       .catch(() => {});
-  }, [loginUrl, sch, phase]);
-
-  const runAutoConnect = useCallback(async () => {
-    setBusy(true);
-    try {
-      const r = await api.refreshToken();
-      return r.ok ? { ok: true } : { ok: false, error: r.error };
-    } catch (err) {
-      return { ok: false, error: err.message };
-    } finally {
-      setBusy(false);
-      load();
-    }
-  }, [load]);
+  }, [loginUrl, phase]);
 
   /** Accepts a raw access_token, a request_token, or a pasted redirect URL. */
   const connect = useCallback(
@@ -119,7 +104,6 @@ export function BrokerProvider({ children }) {
 
   const value = {
     status,
-    sch,
     phase,
     ready: live,
     busy,
@@ -127,7 +111,6 @@ export function BrokerProvider({ children }) {
     loginUrl,
     load,
     connect,
-    runAutoConnect,
   };
 
   return <BrokerCtx.Provider value={value}>{children}</BrokerCtx.Provider>;

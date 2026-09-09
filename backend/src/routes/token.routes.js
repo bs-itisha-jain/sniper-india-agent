@@ -2,8 +2,7 @@ import { Router } from "express";
 import pkg from "kiteconnect";
 import { config } from "../config.js";
 import { getToken, isTokenFresh, saveToken, tokenExpiresAt } from "../services/tokenStore.js";
-import { refreshToken, schedulerStatus, noteManualRefresh } from "../services/scheduler.js";
-import { getLoginUrl, exchangeRequestToken } from "../services/zerodhaAutoLogin.js";
+import { getLoginUrl, exchangeRequestToken } from "../services/kiteAuth.js";
 import { logger } from "../logger.js";
 
 const { KiteConnect } = pkg;
@@ -12,6 +11,8 @@ const router = Router();
 
 /**
  * Token metadata only — the access_token itself is never sent to the browser.
+ * Zerodha invalidates every token at ~07:30 IST daily, so `fresh` flips to
+ * false each morning and a new one must be pasted.
  */
 router.get("/token/status", (req, res) => {
   const token = getToken();
@@ -22,19 +23,10 @@ router.get("/token/status", (req, res) => {
     updatedAt: token?.updatedAt || null,
     expiresAt: expiry ? expiry.toISOString() : null,
     zerodhaUser: token?.user_id || null,
-    scheduler: schedulerStatus(),
   });
 });
 
-router.post("/token/refresh", async (req, res) => {
-  const result = await refreshToken("manual via API");
-  res.status(result.ok ? 200 : 502).json(result);
-});
-
-/**
- * Manual fallback, mirroring the old Python two-step flow. Only needed when
- * the headless login genuinely cannot complete on its own.
- */
+/** The URL a human opens to log in by hand; the redirect carries the request_token. */
 router.get("/token/login-url", (req, res) => {
   try {
     res.json({ loginUrl: getLoginUrl() });
@@ -43,6 +35,7 @@ router.get("/token/login-url", (req, res) => {
   }
 });
 
+/** Paste the Kite login redirect URL (or the request_token from it). */
 router.post("/token/manual", async (req, res) => {
   const requestToken = String(req.body?.request_token || "").trim();
   if (!requestToken) {
@@ -55,12 +48,11 @@ router.post("/token/manual", async (req, res) => {
   try {
     const session = await exchangeRequestToken(requestToken);
     saveToken(session);
-    noteManualRefresh();
-    logger.info("Access token set manually for", session.user_id);
+    logger.info("Access token set via request_token for", session.user_id);
     return res.json({ ok: true, user_id: session.user_id });
   } catch (err) {
     const detail = err?.response?.data?.message || err.message;
-    logger.error("Manual token exchange failed:", detail);
+    logger.error("request_token exchange failed:", detail);
     return res.status(502).json({
       ok: false,
       error: `Could not exchange that request_token: ${detail}`,
@@ -70,10 +62,9 @@ router.post("/token/manual", async (req, res) => {
 });
 
 /**
- * Paste an access_token directly (e.g. obtained via the Python
- * get_access_token.py script or any other means). Verified against Kite
- * before it is stored, so a typo or an expired token is rejected loudly
- * instead of silently breaking every later call.
+ * Paste an access_token directly. Verified against Kite before it is stored,
+ * so a typo or an expired token is rejected loudly instead of silently
+ * breaking every later call.
  */
 router.post("/token/set", async (req, res) => {
   const accessToken = String(req.body?.access_token || "").trim();
@@ -97,11 +88,10 @@ router.post("/token/set", async (req, res) => {
 
     saveToken({
       access_token: accessToken,
-      user_id: profile?.user_id || config.zerodha.userId || null,
+      user_id: profile?.user_id || null,
       login_time: new Date().toISOString(),
       source: "pasted",
     });
-    noteManualRefresh();
     logger.info("Access token set by paste for", profile?.user_id);
     return res.json({ ok: true, user_id: profile?.user_id || null });
   } catch (err) {
