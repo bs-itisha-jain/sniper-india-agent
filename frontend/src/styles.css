@@ -1249,6 +1249,10 @@ select {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+  margin-right: -4px;
 }
 /* receipt sits up top, the commit button anchors to the bottom edge */
 .tk-summary {
@@ -1337,15 +1341,15 @@ select {
 .grid2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px 14px;
-  margin-top: 14px;
+  gap: 10px 14px;
+  margin-top: 10px;
 }
 .f label {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   gap: 8px;
-  margin-bottom: 7px;
+  margin-bottom: 5px;
   font-size: 11.5px;
   font-weight: 500;
   color: var(--ink-2);
@@ -1388,7 +1392,7 @@ select {
 .stepper input {
   flex: 1;
   min-width: 0;
-  height: 42px;
+  height: 38px;
   border: 0;
   background: transparent;
   outline: none;
