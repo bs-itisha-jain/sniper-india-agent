@@ -4,8 +4,6 @@ import SizePanel from "./SizePanel.jsx";
 const PRODUCTS = ["CNC", "MIS"];
 const OFFSETS = [-2, -1, 0, 1, 2];
 
-const KIND_LABELS = { gtt: "GTT", limit: "Limit", market: "Market" };
-
 function Quick({ ltp, onPick }) {
   if (!ltp) return null;
   return (
@@ -44,12 +42,6 @@ export default function OrderTicket() {
     isEdit,
     editing,
     onEditDone,
-    kind,
-    setKind,
-    isGtt,
-    isMarket,
-    needsTrigger,
-    needsLimit,
     action,
     setAction,
     trigger,
@@ -80,54 +72,7 @@ export default function OrderTicket() {
   };
 
   const sideClass = action === "SELL" ? "sell" : "";
-  const verb = isEdit ? "Update" : isGtt ? "Arm" : "Place";
-  const nowKind = !isEdit && !isGtt; // Limit / Market — fires immediately
-
-  const triggerField = (
-    <div className="f">
-      <label>
-        Trigger price <Delta value={trigger} ltp={ltp} />
-      </label>
-      <div className="stepper">
-        <button type="button" onClick={bump(editTrigger, trigger, -0.05)}>
-          −
-        </button>
-        <input
-          inputMode="decimal"
-          value={trigger}
-          onChange={(e) => editTrigger(e.target.value.replace(/[^\d.]/g, ""))}
-          placeholder="0.00"
-        />
-        <button type="button" onClick={bump(editTrigger, trigger, 0.05)}>
-          +
-        </button>
-      </div>
-      <Quick ltp={ltp} onPick={editTrigger} />
-    </div>
-  );
-
-  const limitField = (
-    <div className="f">
-      <label>
-        Limit price <Delta value={limit} ltp={ltp} />
-      </label>
-      <div className="stepper">
-        <button type="button" onClick={bump(editLimit, limit, -0.05)}>
-          −
-        </button>
-        <input
-          inputMode="decimal"
-          value={limit}
-          onChange={(e) => editLimit(e.target.value.replace(/[^\d.]/g, ""))}
-          placeholder="0.00"
-        />
-        <button type="button" onClick={bump(editLimit, limit, 0.05)}>
-          +
-        </button>
-      </div>
-      <Quick ltp={ltp} onPick={editLimit} />
-    </div>
-  );
+  const verb = isEdit ? "Update" : "Arm";
 
   return (
     <form className={`ticket ${sideClass}`} onSubmit={submit}>
@@ -165,37 +110,49 @@ export default function OrderTicket() {
           </button>
         </div>
 
-        {!isEdit && (
-          <div className="f f-wide">
-            <label>Order type</label>
-            <div className="pills">
-              {Object.entries(KIND_LABELS).map(([k, label]) => (
-                <button
-                  type="button"
-                  key={k}
-                  className={kind === k ? "on" : ""}
-                  onClick={() => setKind(k)}
-                >
-                  {label}
-                </button>
-              ))}
+        <div className="grid2">
+          <div className="f">
+            <label>
+              Trigger price <Delta value={trigger} ltp={ltp} />
+            </label>
+            <div className="stepper">
+              <button type="button" onClick={bump(editTrigger, trigger, -0.05)}>
+                −
+              </button>
+              <input
+                inputMode="decimal"
+                value={trigger}
+                onChange={(e) => editTrigger(e.target.value.replace(/[^\d.]/g, ""))}
+                placeholder="0.00"
+              />
+              <button type="button" onClick={bump(editTrigger, trigger, 0.05)}>
+                +
+              </button>
             </div>
+            <Quick ltp={ltp} onPick={editTrigger} />
           </div>
-        )}
 
-        {isGtt ? (
-          <div className="grid2">
-            {triggerField}
-            {limitField}
+          <div className="f">
+            <label>
+              Limit price <Delta value={limit} ltp={ltp} />
+            </label>
+            <div className="stepper">
+              <button type="button" onClick={bump(editLimit, limit, -0.05)}>
+                −
+              </button>
+              <input
+                inputMode="decimal"
+                value={limit}
+                onChange={(e) => editLimit(e.target.value.replace(/[^\d.]/g, ""))}
+                placeholder="0.00"
+              />
+              <button type="button" onClick={bump(editLimit, limit, 0.05)}>
+                +
+              </button>
+            </div>
+            <Quick ltp={ltp} onPick={editLimit} />
           </div>
-        ) : needsLimit ? (
-          <div className="f f-wide">{limitField}</div>
-        ) : (
-          <div className="prefill-note">
-            Market order — fills immediately at the going price
-            {ltp > 0 ? ` (≈ ₹${money(ltp)})` : ""}. No price to set.
-          </div>
-        )}
+        </div>
 
         <div className="f f-wide">
           <label>Product</label>
@@ -216,13 +173,10 @@ export default function OrderTicket() {
           </div>
         </div>
 
-        {prefilled && ltp > 0 && !isEdit && needsLimit && (
+        {prefilled && ltp > 0 && !isEdit && (
           <div className="prefill-note">
-            Prefilled from LTP — limit ₹{money(ltp)}
-            {needsTrigger
-              ? `, trigger ₹${TRIGGER_OFFSET.toFixed(2)} ${action === "BUY" ? "below" : "above"}`
-              : ""}
-            . Edit to take over.
+            Prefilled from LTP — limit ₹{money(ltp)}, trigger ₹{TRIGGER_OFFSET.toFixed(2)}{" "}
+            below. Edit either to take over.
           </div>
         )}
       </div>
@@ -238,20 +192,15 @@ export default function OrderTicket() {
           <div className="receipt-row">
             <span>When</span>
             <b>
-              {isGtt
-                ? t > 0
-                  ? `LTP ${action === "BUY" ? "≤" : "≥"} ₹${money(t)}`
-                  : "trigger not set"
-                : "now"}
+              {t > 0
+                ? `LTP ${action === "BUY" ? "≤" : "≥"} ₹${money(t)}`
+                : "trigger not set"}
             </b>
           </div>
           <div className="receipt-row">
-            <span>{isGtt ? "Then place" : "Place"}</span>
+            <span>Then place</span>
             <b>
-              {action} {q > 0 ? q : "—"}{" "}
-              {isMarket
-                ? `at market${ltp > 0 ? ` (≈ ₹${money(ltp)})` : ""}`
-                : `@ ₹${l > 0 ? money(l) : "—"}`}
+              {action} {q > 0 ? q : "—"} @ ₹{l > 0 ? money(l) : "—"}
             </b>
           </div>
           <div className="receipt-row">
@@ -282,13 +231,7 @@ export default function OrderTicket() {
           {busy ? (
             <span className="spin" />
           ) : pendingConfirm ? (
-            `Confirm — ${nowKind ? `${action.toLowerCase()} now` : verb.toLowerCase()} ${q} ${
-              instrument?.tradingsymbol || ""
-            }`
-          ) : nowKind ? (
-            `${action === "BUY" ? "Buy" : "Sell"} now${
-              instrument ? ` · ${instrument.tradingsymbol}` : ""
-            }`
+            `Confirm — ${verb.toLowerCase()} ${action} ${q} ${instrument?.tradingsymbol || ""}`
           ) : (
             `${verb} ${action}${instrument ? ` · ${instrument.tradingsymbol}` : " GTT"}`
           )}
@@ -300,12 +243,7 @@ export default function OrderTicket() {
           </button>
         ) : (
           <div className="hint-line">
-            {blockReason ||
-              (isGtt
-                ? "GTT fires the LIMIT order when the trigger is met"
-                : isMarket
-                  ? "Places a market order right away — fills at the going price"
-                  : "Places a limit order right away")}
+            {blockReason || "GTT fires the LIMIT order when the trigger is met"}
           </div>
         )}
       </aside>

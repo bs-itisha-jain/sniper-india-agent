@@ -49,40 +49,6 @@ function parseLeg(body) {
   return { exchange, tradingsymbol, action, product, quantity, triggerPrice, price };
 }
 
-/** Validate a plain (non-GTT) MARKET or LIMIT order placed right away. */
-function parseRegular(body) {
-  const symbol = String(body.symbol || "").trim().toUpperCase();
-  const action = String(body.action || "").trim().toUpperCase();
-  const product = String(body.product || "CNC").trim().toUpperCase();
-  const orderType = String(body.order_type || "").trim().toUpperCase();
-  const quantity = Number(body.quantity);
-  const price = Number(body.price);
-
-  if (!symbol) return { error: "symbol is required" };
-  if (!["BUY", "SELL"].includes(action)) return { error: "action must be BUY or SELL" };
-  if (!["MARKET", "LIMIT"].includes(orderType))
-    return { error: "order_type must be MARKET or LIMIT" };
-  if (!Number.isInteger(quantity) || quantity <= 0)
-    return { error: "quantity must be a positive integer" };
-  if (orderType === "LIMIT" && !(price > 0))
-    return { error: "price must be a positive number for a LIMIT order" };
-  if (!PRODUCTS.has(product)) return { error: "product must be CNC or MIS" };
-
-  const [exchange, tradingsymbol] = symbol.includes(":")
-    ? symbol.split(":")
-    : ["NSE", symbol];
-
-  return {
-    exchange,
-    tradingsymbol,
-    action,
-    product,
-    orderType,
-    quantity,
-    price: orderType === "LIMIT" ? price : null,
-  };
-}
-
 /** Flatten Kite's GTT object into what the UI needs (single-leg or two-leg OCO). */
 function shapeTrigger(t) {
   const legs = Array.isArray(t.orders) ? t.orders : [];
@@ -216,57 +182,6 @@ router.post("/order", async (req, res) => {
   } catch (err) {
     logger.error("GTT creation failed:", err.message);
     return fail(res, err, "GTT creation failed");
-  }
-});
-
-/**
- * A plain MARKET or LIMIT order — no trigger, placed immediately. This is the
- * regular Kite order flow, separate from GTT.
- */
-router.post("/order/regular", async (req, res) => {
-  if (!hasAccessToken()) return noToken(res);
-
-  const p = parseRegular(req.body || {});
-  if (p.error) return res.status(400).json({ error: p.error, code: "invalid_input" });
-
-  const instrument = `${p.exchange}:${p.tradingsymbol}`;
-  try {
-    const result = await withKite((kc) => {
-      const params = {
-        exchange: p.exchange,
-        tradingsymbol: p.tradingsymbol,
-        transaction_type:
-          p.action === "BUY" ? kc.TRANSACTION_TYPE_BUY : kc.TRANSACTION_TYPE_SELL,
-        quantity: p.quantity,
-        product: p.product === "MIS" ? kc.PRODUCT_MIS : kc.PRODUCT_CNC,
-        order_type:
-          p.orderType === "LIMIT" ? kc.ORDER_TYPE_LIMIT : kc.ORDER_TYPE_MARKET,
-        validity: kc.VALIDITY_DAY,
-      };
-      if (p.orderType === "LIMIT") params.price = p.price;
-      return kc.placeOrder(kc.VARIETY_REGULAR, params);
-    });
-
-    logger.info(
-      `Regular ${p.orderType} order | ${instrument} | ${p.action} qty=${p.quantity} | ` +
-        `${p.orderType === "LIMIT" ? `@ ${p.price}` : "@ MKT"} | ${p.product}`
-    );
-
-    return res.json({
-      message: `${p.orderType} order placed`,
-      order_id: result?.order_id ?? null,
-      order: {
-        symbol: instrument,
-        action: p.action,
-        quantity: p.quantity,
-        order_type: p.orderType,
-        price: p.price,
-        product: p.product,
-      },
-    });
-  } catch (err) {
-    logger.error("Regular order failed:", err.message);
-    return fail(res, err, "Order placement failed");
   }
 });
 

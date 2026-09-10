@@ -31,3 +31,6 @@ npm-debug.log*
 /*.jpg
 /*.jpeg
 /*.xlsx
+
+# stray local scratch dir
+/new_sniper/

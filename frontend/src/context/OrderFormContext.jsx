@@ -12,7 +12,7 @@ import { useGtts } from "./GttContext.jsx";
 
 const OrderFormCtx = createContext(null);
 
-/** GTT trigger sits this far from the live price by default. */
+/** Trigger sits this far below the live price by default. */
 const TRIGGER_OFFSET = 0.1;
 /** Default budget — quantity is derived from this and the price. */
 const DEFAULT_INVESTMENT = 25000;
@@ -22,9 +22,6 @@ const BIG_VALUE = 200_000; // ₹ — flag orders above this
 const TRIGGER_FAR_PCT = 10; // trigger this far from LTP → flag
 const LIMIT_OFF_PCT = 3; // limit this far from trigger → flag
 const CONFIRM_WINDOW_MS = 5000;
-
-/* Order kinds. GTT waits for a trigger; LIMIT and MARKET fire straight away. */
-const KINDS = ["gtt", "limit", "market"];
 
 const money = (n) =>
   Number(n || 0).toLocaleString("en-IN", {
@@ -47,7 +44,6 @@ const BLANK = {
   limit: "",
   product: "CNC",
   investment: String(DEFAULT_INVESTMENT),
-  kind: "gtt",
 };
 
 export function OrderFormProvider({
@@ -67,7 +63,6 @@ export function OrderFormProvider({
   const [trigger, setTrigger] = useState(BLANK.trigger);
   const [limit, setLimit] = useState(BLANK.limit);
   const [product, setProduct] = useState(BLANK.product);
-  const [kind, setKindRaw] = useState(BLANK.kind);
   const [investment, setInvestment] = useState(BLANK.investment);
   const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -83,26 +78,11 @@ export function OrderFormProvider({
   const isEdit = Boolean(editing);
   const key = instrument ? `${instrument.exchange}:${instrument.tradingsymbol}` : null;
 
-  const isGtt = kind === "gtt";
-  const isMarket = kind === "market";
-  const needsTrigger = isGtt;
-  const needsLimit = !isMarket;
-
   const clearConfirm = useCallback(() => {
     if (confirmTimer.current) clearTimeout(confirmTimer.current);
     confirmTimer.current = null;
     setPendingConfirm(false);
   }, []);
-
-  const setKind = useCallback(
-    (next) => {
-      if (!KINDS.includes(next)) return;
-      setKindRaw(next);
-      clearConfirm();
-      setStatus(null);
-    },
-    [clearConfirm]
-  );
 
   const resetForm = useCallback(() => {
     setAction(BLANK.action);
@@ -110,7 +90,6 @@ export function OrderFormProvider({
     setTrigger(BLANK.trigger);
     setLimit(BLANK.limit);
     setProduct(BLANK.product);
-    setKindRaw(BLANK.kind);
     setInvestment(BLANK.investment);
     setQtyManual(false);
     setStatus(null);
@@ -142,7 +121,6 @@ export function OrderFormProvider({
     setTrigger(editing.trigger_price != null ? String(editing.trigger_price) : "");
     setLimit(editing.limit_price != null ? String(editing.limit_price) : "");
     setProduct(editing.product || "CNC");
-    setKindRaw("gtt"); // an existing GTT is always edited as a GTT
     touched.current = { trigger: true, limit: true };
     setQtyManual(true); // the GTT's own quantity wins in edit mode
     prefilledFor.current = key;
@@ -152,7 +130,7 @@ export function OrderFormProvider({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing]);
 
-  // Prefill from LTP — create mode only. Limit = LTP, trigger = LTP − ₹0.10.
+  // Prefill from LTP — create mode only
   useEffect(() => {
     if (isEdit || !key || !(ltp > 0) || prefilledFor.current === key) return;
     prefilledFor.current = key;
@@ -186,16 +164,8 @@ export function OrderFormProvider({
   const l = Number(limit);
   const budget = Number(investment);
 
-  /** What a share actually costs for sizing. */
-  const unitPrice = isMarket
-    ? ltp > 0
-      ? ltp
-      : 0
-    : l > 0
-      ? l
-      : ltp > 0
-        ? ltp
-        : 0;
+  /** What a share actually costs for sizing: the limit if set, else the LTP. */
+  const unitPrice = l > 0 ? l : ltp > 0 ? ltp : 0;
 
   // Budget drives quantity — until the user types a quantity of their own.
   useEffect(() => {
@@ -229,88 +199,62 @@ export function OrderFormProvider({
     const list = [];
     if (!instrument) list.push("Pick an instrument first");
     if (!Number.isInteger(q) || q <= 0) list.push("Set a quantity");
-    if (needsTrigger && !(t > 0)) list.push("Set a trigger price");
-    if (needsLimit && !(l > 0)) list.push("Set a limit price");
+    if (!(t > 0)) list.push("Set a trigger price");
+    if (!(l > 0)) list.push("Set a limit price");
     return list;
-  }, [instrument, q, t, l, needsTrigger, needsLimit]);
+  }, [instrument, q, t, l]);
 
   const formOk = problems.length === 0;
-  const estValue = formOk ? q * unitPrice : 0;
+  const estValue = formOk ? q * l : 0;
 
   // Fat-finger warnings — informational, not blocking
   const warnings = useMemo(() => {
     if (!formOk) return [];
     const w = [];
     if (estValue > BIG_VALUE) w.push(`Large order — ₹${money(estValue)}`);
-    if (isGtt && ltp > 0) {
+    if (ltp > 0) {
       const trigPct = ((t - ltp) / ltp) * 100;
       if (Math.abs(trigPct) > TRIGGER_FAR_PCT)
         w.push(`Trigger is ${trigPct > 0 ? "+" : ""}${trigPct.toFixed(1)}% from LTP`);
-      const limPct = ((l - t) / t) * 100;
-      if (Math.abs(limPct) > LIMIT_OFF_PCT)
-        w.push(`Limit is ${limPct > 0 ? "+" : ""}${limPct.toFixed(1)}% off the trigger`);
     }
+    const limPct = ((l - t) / t) * 100;
+    if (Math.abs(limPct) > LIMIT_OFF_PCT)
+      w.push(`Limit is ${limPct > 0 ? "+" : ""}${limPct.toFixed(1)}% off the trigger`);
     return w;
-  }, [formOk, estValue, isGtt, ltp, t, l]);
+  }, [formOk, estValue, ltp, t, l]);
 
-  const needsLive = !isEdit; // every kind sizes/prices off the live price
-  const canSubmit = formOk && tokenReady && !(ltpStale && needsLive);
+  const canSubmit = formOk && tokenReady && !(ltpStale && !isEdit);
   const blockReason = !formOk
     ? problems[0]
     : !tokenReady
       ? "Broker not connected"
-      : ltpStale && needsLive
-        ? "Live price is stale — refresh it before placing"
+      : ltpStale && !isEdit
+        ? "Live price is stale — refresh it before arming"
         : null;
 
   const run = async () => {
     clearConfirm();
-    const symbol = `${instrument.exchange}:${instrument.tradingsymbol}`;
+    const payload = {
+      symbol: `${instrument.exchange}:${instrument.tradingsymbol}`,
+      action,
+      quantity: q,
+      trigger_price: t,
+      price: l,
+      product,
+    };
     setBusy(true);
+    setStatus({ type: "info", msg: isEdit ? "Updating GTT…" : "Placing GTT…" });
     try {
       if (isEdit) {
-        setStatus({ type: "info", msg: "Updating GTT…" });
-        await api.updateGtt(editing.id, {
-          symbol,
-          action,
-          quantity: q,
-          trigger_price: t,
-          price: l,
-          product,
-        });
+        await api.updateGtt(editing.id, payload);
         setStatus({ type: "ok", msg: `GTT #${editing.id} updated.` });
         onEditDone?.();
-        refreshGtts?.();
-      } else if (isGtt) {
-        setStatus({ type: "info", msg: "Placing GTT…" });
-        const res = await api.createGtt({
-          symbol,
-          action,
-          quantity: q,
-          trigger_price: t,
-          price: l,
-          product,
-        });
+      } else {
+        const res = await api.createGtt(payload);
         const id = res?.gtt?.trigger_id;
         setStatus({ type: "ok", msg: `GTT armed${id ? ` · #${id}` : ""}.` });
-        refreshGtts?.();
-      } else {
-        const orderType = isMarket ? "MARKET" : "LIMIT";
-        setStatus({ type: "info", msg: `Placing ${orderType} order…` });
-        const res = await api.placeOrder({
-          symbol,
-          action,
-          quantity: q,
-          order_type: orderType,
-          ...(isMarket ? {} : { price: l }),
-          product,
-        });
-        const id = res?.order_id;
-        setStatus({
-          type: "ok",
-          msg: `${orderType} order placed${id ? ` · ${id}` : ""}.`,
-        });
       }
+      refreshGtts?.();
     } catch (err) {
       setStatus({ type: "err", msg: ORDER_ERRORS[err.code] || err.message });
     } finally {
@@ -340,13 +284,6 @@ export function OrderFormProvider({
     isEdit,
     editing,
     onEditDone,
-    // order kind
-    kind,
-    setKind,
-    isGtt,
-    isMarket,
-    needsTrigger,
-    needsLimit,
     // field state + setters
     action,
     setAction,

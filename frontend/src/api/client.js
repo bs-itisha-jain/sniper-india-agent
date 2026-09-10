@@ -39,8 +39,6 @@ export const api = {
   ltp: (symbol) => request(`/ltp?symbol=${encodeURIComponent(symbol)}`),
   createGtt: (payload) =>
     request("/order", { method: "POST", body: JSON.stringify(payload) }),
-  placeOrder: (payload) =>
-    request("/order/regular", { method: "POST", body: JSON.stringify(payload) }),
   listGtt: () => request("/orders/gtt"),
   orders: (opts = {}) =>
     request(`/orders${opts.completeOnly ? "?status=complete" : ""}`),
