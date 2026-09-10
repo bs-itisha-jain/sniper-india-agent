@@ -47,7 +47,7 @@ export default function ConnectBar() {
         <span className="cb-dim">
           {connected
             ? `${status?.zerodhaUser || "Zerodha"} · expires ${clockTime(status?.expiresAt)}`
-            : "Zerodha expires every token overnight — paste a fresh one each day"}
+            : "Log in on Kite, then paste the request token from the redirect URL — new one each day"}
         </span>
       </div>
 
@@ -57,7 +57,7 @@ export default function ConnectBar() {
           value={value}
           onChange={(e) => setValue(e.target.value)}
           placeholder={
-            connected ? "paste a new access token" : "paste access token or Kite login URL"
+            connected ? "paste a new request token" : "paste request token or Kite redirect URL"
           }
           spellCheck="false"
           autoComplete="off"
@@ -68,7 +68,7 @@ export default function ConnectBar() {
         </button>
         {loginUrl && (
           <a className="cb-link" href={loginUrl} target="_blank" rel="noopener noreferrer">
-            get a token ↗
+            log in on Kite ↗
           </a>
         )}
       </form>

@@ -78,7 +78,7 @@ export function BrokerProvider({ children }) {
   const connect = useCallback(
     async (raw) => {
       const input = String(raw || "").trim();
-      if (!input) return { ok: false, error: "Paste your access token first." };
+      if (!input) return { ok: false, error: "Paste your request token first." };
       setBusy(true);
       try {
         const rt = findRequestToken(input);
@@ -86,10 +86,18 @@ export function BrokerProvider({ children }) {
           await api.submitRequestToken(rt);
         } else if (/^https?:\/\//i.test(input)) {
           throw new Error(
-            "That URL has no request_token in it — paste the access token instead."
+            "That URL has no request_token in it — paste the request token itself."
           );
         } else {
-          await api.setAccessToken(input);
+          // A bare token: treat it as a request_token (the backend exchanges it
+          // for an access_token). If Kite rejects it as a request_token, fall
+          // back to treating it as an already-exchanged access_token.
+          try {
+            await api.submitRequestToken(input);
+          } catch (err) {
+            if (err.code === "invalid_input") throw err;
+            await api.setAccessToken(input);
+          }
         }
         await load();
         return { ok: true };
