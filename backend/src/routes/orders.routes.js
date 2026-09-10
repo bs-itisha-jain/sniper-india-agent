@@ -4,7 +4,7 @@ import { logger } from "../logger.js";
 
 const router = Router();
 
-const PRODUCTS = new Set(["CNC", "MIS", "NRML"]);
+const PRODUCTS = new Set(["CNC", "MIS"]);
 
 const HTTP_FOR_CODE = {
   token_expired: 401,
@@ -25,118 +25,31 @@ function fail(res, err, fallback) {
 const noToken = (res) =>
   res.status(503).json({ error: "Zerodha access token not available yet", code: "no_token" });
 
-const round2 = (n) => Math.round(n * 100) / 100;
-
-/**
- * Validate the full ticket: an entry (trigger + limit) plus a protective
- * SL / target pair.
- *
- * `action` is the position being taken:
- *   BUY  → go long  → entry is a BUY;  exit legs SELL; SL below entry, target above
- *   SELL → go short → entry is a SELL; exit legs BUY;  SL above entry, target below
- *
- * Zerodha GTT rule: for a BUY leg trigger ≤ price, for a SELL leg trigger ≥ price.
- */
-function parseTicket(body) {
+/** Normalise a leg's transaction type + validate the single-leg GTT inputs. */
+function parseLeg(body) {
   const symbol = String(body.symbol || "").trim().toUpperCase();
   const action = String(body.action || "").trim().toUpperCase();
   const product = String(body.product || "CNC").trim().toUpperCase();
   const quantity = Number(body.quantity);
   const triggerPrice = Number(body.trigger_price);
-  const limitPrice = Number(body.limit_price);
-  const slPrice = Number(body.sl_price);
-  const targetPrice = Number(body.target_price);
+  const price = Number(body.price);
 
   if (!symbol) return { error: "symbol is required" };
   if (!["BUY", "SELL"].includes(action)) return { error: "action must be BUY or SELL" };
   if (!Number.isInteger(quantity) || quantity <= 0)
     return { error: "quantity must be a positive integer" };
   if (!(triggerPrice > 0)) return { error: "trigger_price must be a positive number" };
-  if (!(limitPrice > 0)) return { error: "limit_price must be a positive number" };
-  if (!(slPrice > 0)) return { error: "sl_price must be a positive number" };
-  if (!(targetPrice > 0)) return { error: "target_price must be a positive number" };
-  if (!PRODUCTS.has(product)) return { error: "product must be CNC, MIS or NRML" };
-
-  if (action === "BUY") {
-    if (triggerPrice > limitPrice)
-      return { error: "for a BUY the trigger price cannot be higher than the limit price" };
-    if (!(slPrice < limitPrice))
-      return { error: "for a BUY the stop-loss must be below the limit price" };
-    if (!(targetPrice > limitPrice))
-      return { error: "for a BUY the target must be above the limit price" };
-  } else {
-    if (triggerPrice < limitPrice)
-      return { error: "for a SELL the trigger price cannot be lower than the limit price" };
-    if (!(slPrice > limitPrice))
-      return { error: "for a SELL the stop-loss must be above the limit price" };
-    if (!(targetPrice < limitPrice))
-      return { error: "for a SELL the target must be below the limit price" };
-  }
+  if (!(price > 0)) return { error: "price must be a positive number" };
+  if (!PRODUCTS.has(product)) return { error: "product must be CNC or MIS" };
 
   const [exchange, tradingsymbol] = symbol.includes(":")
     ? symbol.split(":")
     : ["NSE", symbol];
 
-  const exitType = action === "BUY" ? "SELL" : "BUY";
-
-  return {
-    exchange,
-    tradingsymbol,
-    action,
-    product,
-    quantity,
-    triggerPrice: round2(triggerPrice),
-    limitPrice: round2(limitPrice),
-    slPrice: round2(slPrice),
-    targetPrice: round2(targetPrice),
-    exitType,
-    lower: round2(Math.min(slPrice, targetPrice)),
-    upper: round2(Math.max(slPrice, targetPrice)),
-  };
+  return { exchange, tradingsymbol, action, product, quantity, triggerPrice, price };
 }
 
-/** Single-leg entry GTT params. */
-function entryParams(kc, p, lastPrice) {
-  return {
-    trigger_type: kc.GTT_TYPE_SINGLE,
-    tradingsymbol: p.tradingsymbol,
-    exchange: p.exchange,
-    trigger_values: [p.triggerPrice],
-    last_price: lastPrice,
-    orders: [
-      {
-        transaction_type:
-          p.action === "BUY" ? kc.TRANSACTION_TYPE_BUY : kc.TRANSACTION_TYPE_SELL,
-        quantity: p.quantity,
-        order_type: kc.ORDER_TYPE_LIMIT,
-        product: p.product,
-        price: p.limitPrice,
-      },
-    ],
-  };
-}
-
-/** Two-leg OCO exit GTT params (SL + target). */
-function exitParams(kc, p, lastPrice) {
-  const leg = (price) => ({
-    transaction_type:
-      p.exitType === "BUY" ? kc.TRANSACTION_TYPE_BUY : kc.TRANSACTION_TYPE_SELL,
-    quantity: p.quantity,
-    order_type: kc.ORDER_TYPE_LIMIT,
-    product: p.product,
-    price,
-  });
-  return {
-    trigger_type: kc.GTT_TYPE_OCO,
-    tradingsymbol: p.tradingsymbol,
-    exchange: p.exchange,
-    trigger_values: [p.lower, p.upper],
-    last_price: lastPrice,
-    orders: [leg(p.lower), leg(p.upper)],
-  };
-}
-
-/** Flatten Kite's GTT object into what the UI needs. */
+/** Flatten Kite's GTT object into what the UI needs (single-leg or two-leg OCO). */
 function shapeTrigger(t) {
   const legs = Array.isArray(t.orders) ? t.orders : [];
   const triggers = t.condition?.trigger_values || [];
@@ -148,7 +61,6 @@ function shapeTrigger(t) {
     exchange: t.condition?.exchange,
     reference_price: t.condition?.last_price ?? null,
     product: legs[0]?.product || null,
-    quantity: legs[0]?.quantity ?? null,
     created_at: t.created_at || null,
     updated_at: t.updated_at || null,
     expires_at: t.expires_at || null,
@@ -156,40 +68,41 @@ function shapeTrigger(t) {
 
   if (t.type === "two-leg" && legs.length === 2 && triggers.length === 2) {
     const exit = legs[0]?.transaction_type || null; // SELL exits a long, BUY exits a short
-    const [lo, hi] = triggers;
+    const isLong = exit === "SELL";
+    const [loTrig, hiTrig] = triggers;
     const [loLeg, hiLeg] = legs;
-    const isLong = exit === "SELL"; // exit SELL → protecting a long
+    const slLeg = isLong ? loLeg : hiLeg;
+    const targetLeg = isLong ? hiLeg : loLeg;
     return {
       ...base,
       kind: "exit",
+      exit_action: exit,
       action: isLong ? "BUY" : "SELL", // the position being protected
-      sl_price: isLong ? lo : hi,
-      target_price: isLong ? hi : lo,
-      limit_price: round2((lo + hi) / 2),
-      sl_limit: isLong ? loLeg?.price ?? null : hiLeg?.price ?? null,
-      target_limit: isLong ? hiLeg?.price ?? null : loLeg?.price ?? null,
+      sl_price: isLong ? loTrig : hiTrig,
+      sl_limit: slLeg?.price ?? null,
+      sl_quantity: slLeg?.quantity ?? null,
+      target_price: isLong ? hiTrig : loTrig,
+      target_limit: targetLeg?.price ?? null,
+      target_quantity: targetLeg?.quantity ?? null,
+      quantity: targetLeg?.quantity ?? null,
     };
   }
 
+  const leg = legs[0] || {};
   return {
     ...base,
     kind: "entry",
-    action: legs[0]?.transaction_type || null,
+    action: leg.transaction_type || null,
+    quantity: leg.quantity ?? null,
     trigger_price: triggers[0] ?? null,
-    limit_price: legs[0]?.price ?? null,
+    limit_price: leg.price ?? null,
   };
-}
-
-async function fetchLtp(instrument) {
-  const ltpResponse = await withKite((kc) => kc.getLTP([instrument]));
-  return Number(ltpResponse?.[instrument]?.last_price);
 }
 
 /** Flatten a Kite order-book row. Kite's /orders only returns the current day. */
 function shapeOrder(o) {
   return {
     order_id: o.order_id,
-    parent_order_id: o.parent_order_id || null,
     status: o.status, // COMPLETE | OPEN | CANCELLED | REJECTED | TRIGGER PENDING | ...
     status_message: o.status_message || null,
     tradingsymbol: o.tradingsymbol,
@@ -202,50 +115,26 @@ function shapeOrder(o) {
     pending_quantity: o.pending_quantity ?? null,
     price: o.price ?? null,
     trigger_price: o.trigger_price ?? null,
-    average_price: o.average_price ?? null,
+    average_price: o.average_price ?? null, // the fill price — SL/target are computed off this
     placed_at: o.order_timestamp || null,
     updated_at: o.exchange_update_timestamp || o.order_timestamp || null,
     tag: o.tag || null,
   };
 }
 
-/** Today's order book (Kite only keeps the current trading day). */
-router.get("/orders", async (req, res) => {
-  if (!hasAccessToken()) return noToken(res);
-  try {
-    const orders = await withKite((kc) => kc.getOrders());
-    const shaped = (Array.isArray(orders) ? orders : [])
-      .map(shapeOrder)
-      .sort((a, b) => new Date(b.placed_at) - new Date(a.placed_at));
-    return res.json({ orders: shaped });
-  } catch (err) {
-    logger.error("Order list failed:", err.message);
-    return fail(res, err, "Failed to list orders");
-  }
-});
-
-/** Executed trades for today. */
-router.get("/trades", async (req, res) => {
-  if (!hasAccessToken()) return noToken(res);
-  try {
-    const trades = await withKite((kc) => kc.getTrades());
-    return res.json({ trades: Array.isArray(trades) ? trades : [] });
-  } catch (err) {
-    logger.error("Trade list failed:", err.message);
-    return fail(res, err, "Failed to list trades");
-  }
-});
-
 router.post("/order", async (req, res) => {
   if (!hasAccessToken()) return noToken(res);
 
-  const p = parseTicket(req.body || {});
-  if (p.error) return res.status(400).json({ error: p.error, code: "invalid_input" });
+  const parsed = parseLeg(req.body || {});
+  if (parsed.error) return res.status(400).json({ error: parsed.error, code: "invalid_input" });
 
-  const instrument = `${p.exchange}:${p.tradingsymbol}`;
+  const { exchange, tradingsymbol, action, product, quantity, triggerPrice, price } = parsed;
+  const instrument = `${exchange}:${tradingsymbol}`;
 
   try {
-    const lastPrice = await fetchLtp(instrument);
+    // GTT requires the current price as a reference; fetch it fresh.
+    const ltpResponse = await withKite((kc) => kc.getLTP([instrument]));
+    const lastPrice = Number(ltpResponse?.[instrument]?.last_price);
     if (!lastPrice) {
       return res.status(404).json({
         error: `${instrument} is not a tradable symbol`,
@@ -254,43 +143,65 @@ router.post("/order", async (req, res) => {
     }
 
     logger.info(
-      `Creating GTT pair | ${instrument} | ${p.action} qty=${p.quantity} | ` +
-        `entry trig=${p.triggerPrice} @ ${p.limitPrice} | SL=${p.slPrice} target=${p.targetPrice} | ltp=${lastPrice}`
+      `Creating GTT | ${instrument} | ${action} | qty=${quantity} | trigger=${triggerPrice} | price=${price} | ltp=${lastPrice}`
     );
 
-    const entry = await withKite((kc) => kc.placeGTT(entryParams(kc, p, lastPrice)));
+    const gtt = await withKite((kc) =>
+      kc.placeGTT({
+        trigger_type: kc.GTT_TYPE_SINGLE,
+        tradingsymbol,
+        exchange,
+        trigger_values: [triggerPrice],
+        last_price: lastPrice,
+        orders: [
+          {
+            transaction_type:
+              action === "BUY" ? kc.TRANSACTION_TYPE_BUY : kc.TRANSACTION_TYPE_SELL,
+            quantity,
+            order_type: kc.ORDER_TYPE_LIMIT,
+            product,
+            price,
+          },
+        ],
+      })
+    );
 
-    let exit = null;
-    let exitError = null;
-    try {
-      exit = await withKite((kc) => kc.placeGTT(exitParams(kc, p, lastPrice)));
-    } catch (err) {
-      exitError = err?.response?.data?.message || err.message;
-      logger.error("Exit (SL/target) GTT failed after entry placed:", exitError);
-    }
-
-    return res.status(exitError ? 207 : 200).json({
-      message: exitError
-        ? "Entry GTT placed, but the SL/target GTT failed — add it manually"
-        : "Entry + SL/target GTTs created",
-      entry,
-      exit,
-      exit_error: exitError,
+    return res.json({
+      message: "GTT created successfully",
+      gtt,
       order: {
         symbol: instrument,
-        action: p.action,
-        quantity: p.quantity,
-        trigger_price: p.triggerPrice,
-        limit_price: p.limitPrice,
-        sl_price: p.slPrice,
-        target_price: p.targetPrice,
+        action,
+        quantity,
+        trigger_price: triggerPrice,
+        limit_price: price,
         last_price: lastPrice,
-        product: p.product,
+        product,
       },
     });
   } catch (err) {
     logger.error("GTT creation failed:", err.message);
     return fail(res, err, "GTT creation failed");
+  }
+});
+
+/**
+ * Today's order book. `?status=complete` returns only filled orders — the
+ * entries an exit GTT (SL + target) gets armed against.
+ */
+router.get("/orders", async (req, res) => {
+  if (!hasAccessToken()) return noToken(res);
+  try {
+    const orders = await withKite((kc) => kc.getOrders());
+    let shaped = (Array.isArray(orders) ? orders : []).map(shapeOrder);
+    if (String(req.query.status || "").toLowerCase() === "complete") {
+      shaped = shaped.filter((o) => o.status === "COMPLETE");
+    }
+    shaped.sort((a, b) => new Date(b.placed_at) - new Date(a.placed_at));
+    return res.json({ orders: shaped });
+  } catch (err) {
+    logger.error("Order list failed:", err.message);
+    return fail(res, err, "Failed to list orders");
   }
 });
 
@@ -308,11 +219,6 @@ router.get("/orders/gtt", async (req, res) => {
   }
 });
 
-/**
- * Modify one GTT. The body decides which kind:
- *   sl_price + target_price present → rebuild the OCO exit
- *   otherwise                       → rebuild the single-leg entry
- */
 router.put("/orders/gtt/:id", async (req, res) => {
   if (!hasAccessToken()) return noToken(res);
 
@@ -320,14 +226,15 @@ router.put("/orders/gtt/:id", async (req, res) => {
   if (!Number.isInteger(id) || id <= 0)
     return res.status(400).json({ error: "invalid GTT id", code: "invalid_input" });
 
-  const p = parseTicket(req.body || {});
-  if (p.error) return res.status(400).json({ error: p.error, code: "invalid_input" });
+  const parsed = parseLeg(req.body || {});
+  if (parsed.error) return res.status(400).json({ error: parsed.error, code: "invalid_input" });
 
-  const instrument = `${p.exchange}:${p.tradingsymbol}`;
-  const asExit = req.body?.kind === "exit";
+  const { exchange, tradingsymbol, action, product, quantity, triggerPrice, price } = parsed;
+  const instrument = `${exchange}:${tradingsymbol}`;
 
   try {
-    const lastPrice = await fetchLtp(instrument);
+    const ltpResponse = await withKite((kc) => kc.getLTP([instrument]));
+    const lastPrice = Number(ltpResponse?.[instrument]?.last_price);
     if (!lastPrice) {
       return res.status(404).json({
         error: `${instrument} is not a tradable symbol`,
@@ -335,10 +242,26 @@ router.put("/orders/gtt/:id", async (req, res) => {
       });
     }
 
-    logger.info(`Modifying ${asExit ? "exit" : "entry"} GTT ${id} | ${instrument} | ${p.action}`);
+    logger.info(`Modifying GTT ${id} | ${instrument} | ${action} qty=${quantity} trig=${triggerPrice} @ ${price}`);
 
     const gtt = await withKite((kc) =>
-      kc.modifyGTT(id, asExit ? exitParams(kc, p, lastPrice) : entryParams(kc, p, lastPrice))
+      kc.modifyGTT(id, {
+        trigger_type: kc.GTT_TYPE_SINGLE,
+        tradingsymbol,
+        exchange,
+        trigger_values: [triggerPrice],
+        last_price: lastPrice,
+        orders: [
+          {
+            transaction_type:
+              action === "BUY" ? kc.TRANSACTION_TYPE_BUY : kc.TRANSACTION_TYPE_SELL,
+            quantity,
+            order_type: kc.ORDER_TYPE_LIMIT,
+            product,
+            price,
+          },
+        ],
+      })
     );
     return res.json({ message: "GTT updated", gtt });
   } catch (err) {

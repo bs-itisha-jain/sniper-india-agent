@@ -4,10 +4,6 @@ Zerodha **GTT order** desk, built as a deployable **React + Node** project.
 
 - **Open access** — no app login. Gate the deployment at the platform level
   (e.g. Vercel Deployment Protection) if you need one.
-- **Two-leg OCO GTT** — the ticket places a linked stop-loss + target pair
-  (default ±0.8% around your limit price, editable). Whichever hits first fires;
-  the other is cancelled. It's a protective exit — you enter the position
-  separately.
 - **One shared Zerodha access token** — stored server-side in `backend/data/token.json`.
   Every request uses that token.
 - **Manual token, once a day** — Zerodha kills every access token overnight
@@ -83,9 +79,9 @@ No auth — every `/api/*` route is open.
 | method | path | purpose |
 |---|---|---|
 | GET  | `/api/ltp?symbol=RELIANCE` | last traded price |
-| POST | `/api/order` | create a two-leg OCO GTT — `{ symbol, action, quantity, limit_price, sl_price, target_price, product }`. `action` is the position being protected (BUY = long, SELL = short); the exit legs are the opposite side. |
+| POST | `/api/order` | create single-leg GTT — `{ symbol, action, quantity, trigger_price, price, product }` |
 | GET  | `/api/orders/gtt` | list existing GTTs |
-| PUT  | `/api/orders/gtt/:id` | modify a GTT (same body as POST) |
+| PUT  | `/api/orders/gtt/:id` | modify a GTT |
 | DELETE | `/api/orders/gtt/:id` | cancel a GTT |
 | GET  | `/api/token/status` | token freshness + expiry (metadata only) |
 | GET  | `/api/token/login-url` | Kite login URL |

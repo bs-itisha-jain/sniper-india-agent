@@ -40,8 +40,8 @@ export const api = {
   createGtt: (payload) =>
     request("/order", { method: "POST", body: JSON.stringify(payload) }),
   listGtt: () => request("/orders/gtt"),
-  todayOrders: () => request("/orders"),
-  todayTrades: () => request("/trades"),
+  orders: (opts = {}) =>
+    request(`/orders${opts.completeOnly ? "?status=complete" : ""}`),
   updateGtt: (id, payload) =>
     request(`/orders/gtt/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
   cancelGtt: (id) => request(`/orders/gtt/${id}`, { method: "DELETE" }),

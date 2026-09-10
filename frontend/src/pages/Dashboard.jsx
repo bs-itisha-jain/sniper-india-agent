@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { BrokerProvider, useBroker } from "../context/BrokerContext.jsx";
 import { GttProvider } from "../context/GttContext.jsx";
+import { OrderFormProvider } from "../context/OrderFormContext.jsx";
 import Rail from "../components/Rail.jsx";
 import BrokerPill from "../components/BrokerPill.jsx";
 import ConnectBar from "../components/ConnectBar.jsx";
@@ -66,20 +67,22 @@ function Desk() {
 
         <ConnectBar />
 
-        <div className="desk-top">
-          <SymbolSearch onPick={pick} onClear={clearAll} resetSignal={resetSignal} />
-          <TargetCard instrument={instrument} onLtp={setLtp} onStale={setLtpStale} />
-        </div>
-
-        <OrderTicket
+        <OrderFormProvider
           instrument={instrument}
           ltp={ltp}
           ltpStale={ltpStale}
           tokenReady={tokenReady}
-          resetSignal={resetSignal}
           editing={editing}
           onEditDone={() => setEditing(null)}
-        />
+          resetSignal={resetSignal}
+        >
+          <div className="desk-top">
+            <SymbolSearch onPick={pick} onClear={clearAll} resetSignal={resetSignal} />
+            <TargetCard instrument={instrument} onLtp={setLtp} onStale={setLtpStale} />
+          </div>
+
+          <OrderTicket />
+        </OrderFormProvider>
       </main>
     </div>
   );
