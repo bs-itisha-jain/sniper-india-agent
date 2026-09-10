@@ -1440,6 +1440,16 @@ select {
   background: var(--paper-2);
   color: var(--ink);
 }
+.stepper.is-locked {
+  opacity: 0.6;
+}
+.stepper.is-locked input {
+  cursor: not-allowed;
+}
+.stepper button:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
 
 .f-wide {
   margin-top: 12px;

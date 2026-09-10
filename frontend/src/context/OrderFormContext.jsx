@@ -12,8 +12,16 @@ import { useGtts } from "./GttContext.jsx";
 
 const OrderFormCtx = createContext(null);
 
-/** Trigger sits this far below the live price by default. */
-const TRIGGER_OFFSET = 0.1;
+/** Trigger sits this % from the live price by default (Zerodha needs ≥ 0.25%). */
+const TRIGGER_PCT = 0.3;
+/** Zerodha rejects a GTT whose trigger is closer than this to the LTP. */
+const MIN_TRIGGER_PCT = 0.25;
+/**
+ * "Market" mode: the fired LIMIT order is priced this % past the LTP on the
+ * fill side (above for a BUY, below for a SELL) so it sweeps the book and
+ * fills straight away — a market order in all but name.
+ */
+const MARKET_LIMIT_PCT = 0.3;
 /** Default budget — quantity is derived from this and the price. */
 const DEFAULT_INVESTMENT = 25000;
 
@@ -44,6 +52,13 @@ const BLANK = {
   limit: "",
   product: "CNC",
   investment: String(DEFAULT_INVESTMENT),
+  priceMode: "limit", // "limit" | "market"
+};
+
+/** The market-mode limit: LTP nudged past itself on the side the order fills. */
+const marketLimit = (ltp, action) => {
+  const off = MARKET_LIMIT_PCT / 100;
+  return (action === "BUY" ? ltp * (1 + off) : ltp * (1 - off)).toFixed(2);
 };
 
 export function OrderFormProvider({
@@ -63,6 +78,7 @@ export function OrderFormProvider({
   const [trigger, setTrigger] = useState(BLANK.trigger);
   const [limit, setLimit] = useState(BLANK.limit);
   const [product, setProduct] = useState(BLANK.product);
+  const [priceMode, setPriceModeRaw] = useState(BLANK.priceMode);
   const [investment, setInvestment] = useState(BLANK.investment);
   const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -90,6 +106,7 @@ export function OrderFormProvider({
     setTrigger(BLANK.trigger);
     setLimit(BLANK.limit);
     setProduct(BLANK.product);
+    setPriceModeRaw(BLANK.priceMode);
     setInvestment(BLANK.investment);
     setQtyManual(false);
     setStatus(null);
@@ -121,6 +138,7 @@ export function OrderFormProvider({
     setTrigger(editing.trigger_price != null ? String(editing.trigger_price) : "");
     setLimit(editing.limit_price != null ? String(editing.limit_price) : "");
     setProduct(editing.product || "CNC");
+    setPriceModeRaw("limit"); // an existing GTT is edited as a plain limit
     touched.current = { trigger: true, limit: true };
     setQtyManual(true); // the GTT's own quantity wins in edit mode
     prefilledFor.current = key;
@@ -134,11 +152,33 @@ export function OrderFormProvider({
   useEffect(() => {
     if (isEdit || !key || !(ltp > 0) || prefilledFor.current === key) return;
     prefilledFor.current = key;
-    const below = ltp - TRIGGER_OFFSET;
-    if (!touched.current.limit) setLimit(ltp.toFixed(2));
-    if (!touched.current.trigger) setTrigger((below > 0 ? below : ltp).toFixed(2));
+    const off = TRIGGER_PCT / 100;
+    const trig = action === "BUY" ? ltp * (1 - off) : ltp * (1 + off);
+    if (!touched.current.trigger) setTrigger((trig > 0 ? trig : ltp).toFixed(2));
+    if (!touched.current.limit) {
+      setLimit(priceMode === "market" ? marketLimit(ltp, action) : ltp.toFixed(2));
+    }
     setPrefilled(true);
-  }, [isEdit, key, ltp]);
+  }, [isEdit, key, ltp, action, priceMode]);
+
+  // Market mode owns the limit price — keep it pinned past the LTP.
+  useEffect(() => {
+    if (isEdit || priceMode !== "market" || !(ltp > 0)) return;
+    setLimit(marketLimit(ltp, action));
+  }, [isEdit, priceMode, ltp, action]);
+
+  /** Switching to market snaps the limit immediately; back to limit leaves it. */
+  const setPriceMode = useCallback(
+    (mode) => {
+      setPriceModeRaw(mode);
+      clearConfirm();
+      if (mode === "market" && ltp > 0) {
+        touched.current.limit = false;
+        setLimit(marketLimit(ltp, action));
+      }
+    },
+    [ltp, action, clearConfirm]
+  );
 
   const editTrigger = useCallback(
     (v) => {
@@ -151,12 +191,13 @@ export function OrderFormProvider({
   );
   const editLimit = useCallback(
     (v) => {
+      if (priceMode === "market") return; // market mode computes the limit
       touched.current.limit = true;
       setPrefilled(false);
       clearConfirm();
       setLimit(v);
     },
-    [clearConfirm]
+    [clearConfirm, priceMode]
   );
 
   const q = Number(quantity);
@@ -201,8 +242,10 @@ export function OrderFormProvider({
     if (!Number.isInteger(q) || q <= 0) list.push("Set a quantity");
     if (!(t > 0)) list.push("Set a trigger price");
     if (!(l > 0)) list.push("Set a limit price");
+    if (ltp > 0 && t > 0 && (Math.abs(t - ltp) / ltp) * 100 < MIN_TRIGGER_PCT)
+      list.push(`Trigger must be ≥ ${MIN_TRIGGER_PCT}% from the last price (Zerodha rule)`);
     return list;
-  }, [instrument, q, t, l]);
+  }, [instrument, q, t, l, ltp]);
 
   const formOk = problems.length === 0;
   const estValue = formOk ? q * l : 0;
@@ -293,6 +336,8 @@ export function OrderFormProvider({
     editLimit,
     product,
     setProduct,
+    priceMode,
+    setPriceMode,
     investment,
     editInvestment,
     quantity,
@@ -310,7 +355,9 @@ export function OrderFormProvider({
     shortfall,
     estValue,
     prefilled,
-    TRIGGER_OFFSET,
+    TRIGGER_PCT,
+    MARKET_LIMIT_PCT,
+    MIN_TRIGGER_PCT,
     // submit flow
     submit,
     busy,
